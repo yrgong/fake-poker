@@ -425,14 +425,11 @@ body {
   background: var(--card-bg);
   border-radius: 5px;
   box-shadow: 0 3px 8px rgba(0, 0, 0, 0.4);
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  padding: 4px;
   position: relative;
   font-weight: 800;
-  transition: transform 0.2s ease;
+  transition: transform 0.2s ease, opacity 0.2s ease;
   animation: deal-in 0.25s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+  overflow: hidden;
 }
 
 @keyframes deal-in {
@@ -448,39 +445,55 @@ body {
   color: var(--black-suit);
 }
 
-.card-top {
-  font-size: 0.78rem;
-  line-height: 1;
+.card-corner {
+  position: absolute;
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
+  line-height: 0.95;
+  pointer-events: none;
 }
 
-.card-top .rank {
-  font-size: 0.85rem;
+.card-corner .rank {
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: -0.5px;
 }
 
-.card-top .suit {
-  font-size: 0.72rem;
+.card-corner .suit {
+  font-size: 0.7rem;
 }
 
-.card-center {
-  font-size: 1.25rem;
-  text-align: center;
-  align-self: center;
+.card-corner.top-left {
+  top: 3px;
+  left: 4px;
 }
 
-.card-bottom {
-  font-size: 0.78rem;
-  line-height: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
+.card-corner.bottom-right {
+  bottom: 3px;
+  right: 4px;
   transform: rotate(180deg);
 }
 
-.card-bottom .rank {
-  font-size: 0.85rem;
+.card-center {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 1.3rem;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.card.card-folded {
+  opacity: 0.45;
+  filter: grayscale(40%);
+}
+
+.player-status.winner-text {
+  color: var(--gold);
+  font-weight: 700;
+  text-shadow: 0 0 6px var(--gold-glow);
 }
 
 .card.back {
@@ -789,12 +802,22 @@ body {
     padding: 3px;
   }
 
-  .card-top .rank, .card-bottom .rank {
+  .card-corner.top-left {
+    top: 2px;
+    left: 2px;
+  }
+
+  .card-corner.bottom-right {
+    bottom: 2px;
+    right: 2px;
+  }
+
+  .card-corner .rank {
     font-size: 0.72rem;
   }
 
-  .card-top .suit, .card-bottom .suit {
-    font-size: 0.6rem;
+  .card-corner .suit {
+    font-size: 0.58rem;
   }
 
   .card-center {

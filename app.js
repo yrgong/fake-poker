@@ -222,6 +222,8 @@ class PokerGame {
     this.phase = 'IDLE'; // IDLE, PRE-FLOP, FLOP, TURN, RIVER, SHOWDOWN
     this.turnHistoryCount = 0;
     this.lastAggressorIdx = -1;
+    this.roundOver = false;
+    this.lastWinners = [];
 
     this.bindDOM();
   }
@@ -362,6 +364,8 @@ class PokerGame {
     this.pot = 0;
     this.currentHighestBet = 0;
     this.minRaise = this.bigBlind;
+    this.roundOver = false;
+    this.lastWinners = [];
 
     this.players.forEach(p => {
       p.folded = false;
@@ -656,6 +660,8 @@ class PokerGame {
 
     this.pot = 0;
     this.phase = 'IDLE';
+    this.roundOver = true;
+    this.lastWinners = winners;
     this.bettingControls.style.display = 'none';
     this.startControls.style.display = 'flex';
     this.startBtn.innerText = 'Next Hand';
@@ -721,17 +727,35 @@ class PokerGame {
           statusEl.className = 'player-status';
         }
       } else if (statusEl) {
-        statusEl.innerText = this.phase === 'IDLE' ? 'Ready' : 'In Hand';
-        statusEl.className = 'player-status';
+        if (this.roundOver) {
+          const isWinner = this.lastWinners && this.lastWinners.some(w => w.id === p.id);
+          if (this.communityCards.length >= 3) {
+            const evalResult = HandEvaluator.evaluate7([...p.holeCards, ...this.communityCards]);
+            statusEl.innerText = isWinner ? `🏆 ${evalResult.name}` : evalResult.name;
+            statusEl.className = isWinner ? 'player-status winner-text' : 'player-status';
+          } else {
+            statusEl.innerText = isWinner ? '🏆 Winner' : 'Active';
+            statusEl.className = isWinner ? 'player-status winner-text' : 'player-status';
+          }
+        } else {
+          statusEl.innerText = this.phase === 'IDLE' ? 'Ready' : 'In Hand';
+          statusEl.className = 'player-status';
+        }
       }
 
-      // Cards rendering
+      // Cards rendering: Show everyone's cards when round is over!
       cardsEl.innerHTML = '';
       if (p.holeCards.length > 0) {
-        if (p.isHuman || this.phase === 'SHOWDOWN' || (p.folded && false)) {
-          p.holeCards.forEach(c => cardsEl.appendChild(this.renderCardDOM(c)));
+        if (p.isHuman || this.roundOver || this.phase === 'SHOWDOWN') {
+          p.holeCards.forEach(c => {
+            const cardEl = this.renderCardDOM(c);
+            if (p.folded) {
+              cardEl.classList.add('card-folded');
+            }
+            cardsEl.appendChild(cardEl);
+          });
         } else {
-          // Face-down bot cards
+          // Face-down bot cards during active play
           cardsEl.appendChild(this.renderCardDOM(null, true));
           cardsEl.appendChild(this.renderCardDOM(null, true));
         }
@@ -764,12 +788,12 @@ class PokerGame {
 
     cardEl.className = `card ${card.color}`;
     cardEl.innerHTML = `
-      <div class="card-top">
+      <div class="card-corner top-left">
         <span class="rank">${card.rank}</span>
         <span class="suit">${card.suit}</span>
       </div>
       <div class="card-center">${card.suit}</div>
-      <div class="card-bottom">
+      <div class="card-corner bottom-right">
         <span class="rank">${card.rank}</span>
         <span class="suit">${card.suit}</span>
       </div>
