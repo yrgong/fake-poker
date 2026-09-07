@@ -421,7 +421,7 @@ body {
   box-shadow: 0 3px 8px rgba(0, 0, 0, 0.4);
   position: relative;
   font-weight: 800;
-  transition: opacity 0.2s ease, filter 0.2s ease;
+  transition: none;
   overflow: hidden;
 }
 

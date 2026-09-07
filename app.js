@@ -25,6 +25,21 @@ const RANKS = [
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+function getSecureRandomInt(max) {
+  if (typeof window !== 'undefined' && window.crypto && window.crypto.getRandomValues) {
+    const arr = new Uint32Array(1);
+    const maxUint32 = 0xFFFFFFFF;
+    const limit = maxUint32 - (maxUint32 % max);
+    let val;
+    do {
+      window.crypto.getRandomValues(arr);
+      val = arr[0];
+    } while (val >= limit);
+    return val % max;
+  }
+  return Math.floor(Math.random() * max);
+}
+
 // Sound Synthesizer via Web Audio API
 class SoundManager {
   constructor() {
@@ -342,10 +357,12 @@ class PokerGame {
         });
       }
     }
-    // Fisher-Yates Shuffle
-    for (let i = this.deck.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [this.deck[i], this.deck[j]] = [this.deck[j], this.deck[i]];
+    // Cryptographically fair multi-pass Fisher-Yates shuffle
+    for (let pass = 0; pass < 3; pass++) {
+      for (let i = this.deck.length - 1; i > 0; i--) {
+        const j = getSecureRandomInt(i + 1);
+        [this.deck[i], this.deck[j]] = [this.deck[j], this.deck[i]];
+      }
     }
   }
 
@@ -369,13 +386,26 @@ class PokerGame {
     this.roundOver = false;
     this.lastWinners = [];
 
+    // Reset player states
     this.players.forEach(p => {
       p.folded = false;
       p.allIn = false;
       p.cardsRevealed = false;
       p.currentBet = 0;
-      p.holeCards = [this.deck.pop(), this.deck.pop()];
+      p.holeCards = [];
     });
+
+    // Deal hole cards in authentic casino rotational order:
+    // Round 1: 1 card to each player starting clockwise from Small Blind
+    for (let i = 0; i < this.players.length; i++) {
+      const pIdx = (this.dealerIdx + 1 + i) % this.players.length;
+      this.players[pIdx].holeCards.push(this.deck.pop());
+    }
+    // Round 2: 2nd card to each player starting clockwise from Small Blind
+    for (let i = 0; i < this.players.length; i++) {
+      const pIdx = (this.dealerIdx + 1 + i) % this.players.length;
+      this.players[pIdx].holeCards.push(this.deck.pop());
+    }
 
     sounds.playCard();
     this.phase = 'PRE-FLOP';
@@ -394,7 +424,7 @@ class PokerGame {
     this.lastAggressorIdx = bbIdx;
 
     this.startControls.style.display = 'none';
-    this.updateUI();
+    this.updateUI(true); // Initial cards render
     this.nextTurn();
   }
 
@@ -557,44 +587,118 @@ class PokerGame {
 
   botAction(bot) {
     const callNeeded = this.currentHighestBet - bot.currentBet;
-    const handEval = HandEvaluator.evaluate7([...bot.holeCards, ...this.communityCards]);
-    const botStrength = handEval.category; // 0 (high card) to 9 (royal flush)
+    const isPreFlop = this.phase === 'PRE-FLOP';
+    
+    if (isPreFlop) {
+      // Evaluate Pre-Flop strength
+      const c1 = bot.holeCards[0];
+      const c2 = bot.holeCards[1];
+      const isPair = c1.val === c2.val;
+      const isSuited = c1.suit === c2.suit;
+      const highVal = Math.max(c1.val, c2.val);
+      const lowVal = Math.min(c1.val, c2.val);
+      const isConnected = (highVal - lowVal) <= 2;
 
-    // Pre-flop basic strength heuristic
-    const isPair = bot.holeCards[0].val === bot.holeCards[1].val;
-    const highCardVal = Math.max(bot.holeCards[0].val, bot.holeCards[1].val);
-    const preFlopScore = isPair ? (highCardVal * 2) : (highCardVal + (bot.holeCards[0].suit === bot.holeCards[1].suit ? 3 : 0));
+      let tier = 'trash'; // trash, medium, strong, monster
+      if (isPair) {
+        if (highVal >= 10) tier = 'monster'; // TT, JJ, QQ, KK, AA
+        else if (highVal >= 6) tier = 'strong'; // 66-99
+        else tier = 'medium'; // 22-55
+      } else if (highVal === 14) { // Ace high
+        if (lowVal >= 10) tier = isSuited ? 'monster' : 'strong'; // AK, AQ, AJ, AT
+        else if (isSuited) tier = 'medium'; // A2s-A9s
+        else tier = lowVal >= 8 ? 'medium' : 'trash'; // A8o, A9o
+      } else if (highVal >= 11 && lowVal >= 10) { // KQ, KJ, QJ
+        tier = 'strong';
+      } else if (isSuited && isConnected && lowVal >= 6) { // 78s, 89s, 9Ts
+        tier = 'medium';
+      } else if (highVal >= 12 && isSuited) {
+        tier = 'medium';
+      }
 
-    // Simple decision engine
-    if (callNeeded === 0) {
-      // Can check for free
-      if ((this.phase === 'PRE-FLOP' && preFlopScore >= 20) || botStrength >= 2) {
-        // Raise occasionally if strong
-        if (Math.random() < 0.6 && bot.chips > this.bigBlind * 2) {
-          const raiseAmount = Math.min(bot.currentBet + this.bigBlind * 2, bot.chips + bot.currentBet);
+      if (callNeeded === 0) {
+        // Can check for free
+        if (tier === 'monster' && Math.random() < 0.5) {
+          const raiseAmount = Math.min(this.currentHighestBet + this.minRaise * 2, bot.chips + bot.currentBet);
           this.handleAction('raise', raiseAmount);
-          return;
+        } else {
+          this.handleAction('call'); // Check
+        }
+      } else {
+        // Facing a bet pre-flop
+        if (tier === 'monster') {
+          if (Math.random() < 0.45 && bot.chips > callNeeded * 2) {
+            const raiseAmount = Math.min(this.currentHighestBet + this.minRaise * 2, bot.chips + bot.currentBet);
+            this.handleAction('raise', raiseAmount);
+          } else {
+            this.handleAction('call');
+          }
+        } else if (tier === 'strong') {
+          if (callNeeded <= this.bigBlind * 3) {
+            this.handleAction('call');
+          } else {
+            this.handleAction('fold');
+          }
+        } else if (tier === 'medium') {
+          if (callNeeded <= this.bigBlind) {
+            this.handleAction('call');
+          } else {
+            this.handleAction('fold');
+          }
+        } else {
+          // Trash hands fold to any bet!
+          this.handleAction('fold');
         }
       }
-      this.handleAction('call'); // Check
-    } else {
-      // Must put in chips to continue
-      const potOdds = callNeeded / (this.pot + callNeeded);
+      return;
+    }
 
-      if (callNeeded > bot.chips * 0.6 && botStrength < 2 && preFlopScore < 20) {
-        // Too expensive for weak hand
-        this.handleAction('fold');
-      } else if (callNeeded <= this.bigBlind * 2 || botStrength >= 1 || preFlopScore >= 16) {
-        // Call or raise
-        if (botStrength >= 3 && Math.random() < 0.5 && bot.chips > callNeeded * 2) {
+    // Post-Flop evaluation (Flop, Turn, River)
+    const handEval = HandEvaluator.evaluate7([...bot.holeCards, ...this.communityCards]);
+    const cat = handEval.category; // 0 = High card, 1 = Pair, 2 = Two Pair, 3+ = Strong
+
+    if (callNeeded === 0) {
+      // Free check available
+      if (cat >= 3 && Math.random() < 0.65) {
+        const raiseAmount = Math.min(this.currentHighestBet + this.bigBlind * 2, bot.chips + bot.currentBet);
+        this.handleAction('raise', raiseAmount);
+      } else if (cat >= 1 && Math.random() < 0.25) {
+        const raiseAmount = Math.min(this.currentHighestBet + this.bigBlind, bot.chips + bot.currentBet);
+        this.handleAction('raise', raiseAmount);
+      } else {
+        this.handleAction('call'); // Check
+      }
+    } else {
+      // Must call a bet
+      if (cat >= 3) {
+        // Monster hand: re-raise or call
+        if (Math.random() < 0.45 && bot.chips > callNeeded * 2) {
           const raiseAmount = Math.min(this.currentHighestBet + this.minRaise * 2, bot.chips + bot.currentBet);
           this.handleAction('raise', raiseAmount);
         } else {
           this.handleAction('call');
         }
+      } else if (cat === 2) {
+        // Two pair: call unless bet is gigantic
+        if (callNeeded <= bot.chips * 0.7) {
+          this.handleAction('call');
+        } else {
+          this.handleAction('fold');
+        }
+      } else if (cat === 1) {
+        // One pair: call small/medium bets, fold to large raises
+        if (callNeeded <= this.bigBlind * 2.5 || callNeeded <= this.pot * 0.35) {
+          this.handleAction('call');
+        } else {
+          this.handleAction('fold');
+        }
       } else {
-        // Weak hand facing bet -> fold
-        this.handleAction('fold');
+        // High card / air: fold unless rare bluff
+        if (bot.name === 'Bob' && Math.random() < 0.12 && callNeeded <= this.bigBlind * 2) {
+          this.handleAction('call');
+        } else {
+          this.handleAction('fold');
+        }
       }
     }
   }
@@ -608,53 +712,53 @@ class PokerGame {
     this.currentHighestBet = 0;
     this.minRaise = this.bigBlind;
     this.turnHistoryCount = 0;
-    this.updateUI();
+    this.updateUI(false);
 
     if (this.phase === 'PRE-FLOP') {
       this.phase = 'FLOP';
       this.deck.pop(); // Burn card
       this.log('--- Dealing Flop ---', 'system');
-      this.updateUI();
+      this.updateUI(false);
       await sleep(500);
 
       // Card 1
       this.communityCards.push(this.deck.pop());
       sounds.playCard();
-      this.updateUI();
+      this.updateUI(true);
       await sleep(400);
 
       // Card 2
       this.communityCards.push(this.deck.pop());
       sounds.playCard();
-      this.updateUI();
+      this.updateUI(true);
       await sleep(400);
 
       // Card 3
       this.communityCards.push(this.deck.pop());
       sounds.playCard();
-      this.updateUI();
+      this.updateUI(true);
       await sleep(750); // Pause to assess the full flop
     } else if (this.phase === 'FLOP') {
       this.phase = 'TURN';
       this.deck.pop(); // Burn card
       this.log('--- Dealing Turn ---', 'system');
-      this.updateUI();
+      this.updateUI(false);
       await sleep(850); // Suspenseful pause before the Turn!
 
       this.communityCards.push(this.deck.pop());
       sounds.playCard();
-      this.updateUI();
+      this.updateUI(true);
       await sleep(750);
     } else if (this.phase === 'TURN') {
       this.phase = 'RIVER';
       this.deck.pop(); // Burn card
       this.log('--- Dealing River ---', 'system');
-      this.updateUI();
+      this.updateUI(false);
       await sleep(950); // Suspenseful pause before the River!
 
       this.communityCards.push(this.deck.pop());
       sounds.playCard();
-      this.updateUI();
+      this.updateUI(true);
       await sleep(800);
     } else if (this.phase === 'RIVER') {
       this.phase = 'SHOWDOWN';
@@ -664,7 +768,7 @@ class PokerGame {
 
     // Next round starts with player to the left of dealer
     this.currentTurnIdx = (this.dealerIdx + 1) % this.players.length;
-    this.updateUI();
+    this.updateUI(false);
     this.nextTurn();
   }
 
@@ -726,22 +830,24 @@ class PokerGame {
     this.bettingControls.style.display = 'none';
     this.startControls.style.display = 'flex';
     this.startBtn.innerText = 'Next Hand';
-    this.updateUI();
+    this.updateUI(true);
   }
 
-  updateUI() {
+  updateUI(refreshCards = false) {
     this.potDisplay.innerText = `$${this.pot}`;
     this.phaseBadge.innerText = this.phase;
 
-    // Render Community Cards
-    this.communityCardsEl.innerHTML = '';
-    for (let i = 0; i < 5; i++) {
-      if (this.communityCards[i]) {
-        this.communityCardsEl.appendChild(this.renderCardDOM(this.communityCards[i]));
-      } else {
-        const slot = document.createElement('div');
-        slot.className = 'card-slot';
-        this.communityCardsEl.appendChild(slot);
+    // Render Community Cards ONLY when explicitly asked (dealing phases or new hand)
+    if (refreshCards) {
+      this.communityCardsEl.innerHTML = '';
+      for (let i = 0; i < 5; i++) {
+        if (this.communityCards[i]) {
+          this.communityCardsEl.appendChild(this.renderCardDOM(this.communityCards[i]));
+        } else {
+          const slot = document.createElement('div');
+          slot.className = 'card-slot';
+          this.communityCardsEl.appendChild(slot);
+        }
       }
     }
 
@@ -782,6 +888,8 @@ class PokerGame {
           statusEl.innerText = 'Folded';
           statusEl.className = 'player-status folded';
         }
+        // Mark folded cards without rebuilding DOM
+        cardsEl.querySelectorAll('.card').forEach(c => c.classList.add('card-folded'));
       } else if (p.allIn) {
         if (statusEl) {
           statusEl.innerText = 'All-In';
@@ -808,21 +916,23 @@ class PokerGame {
         }
       }
 
-      // Cards rendering: Human always visible, bots revealed sequentially or at round end
-      cardsEl.innerHTML = '';
-      if (p.holeCards.length > 0) {
-        if (p.isHuman || this.roundOver || p.cardsRevealed) {
-          p.holeCards.forEach(c => {
-            const cardEl = this.renderCardDOM(c);
-            if (p.folded) {
-              cardEl.classList.add('card-folded');
-            }
-            cardsEl.appendChild(cardEl);
-          });
-        } else {
-          // Face-down bot cards during active play
-          cardsEl.appendChild(this.renderCardDOM(null, true));
-          cardsEl.appendChild(this.renderCardDOM(null, true));
+      // Cards rendering: Rebuild cards ONLY when refreshCards is true (deal, flop, turn, river, showdown)
+      if (refreshCards) {
+        cardsEl.innerHTML = '';
+        if (p.holeCards.length > 0) {
+          if (p.isHuman || this.roundOver || p.cardsRevealed) {
+            p.holeCards.forEach(c => {
+              const cardEl = this.renderCardDOM(c);
+              if (p.folded) {
+                cardEl.classList.add('card-folded');
+              }
+              cardsEl.appendChild(cardEl);
+            });
+          } else {
+            // Face-down bot cards during active play
+            cardsEl.appendChild(this.renderCardDOM(null, true));
+            cardsEl.appendChild(this.renderCardDOM(null, true));
+          }
         }
       }
     });
