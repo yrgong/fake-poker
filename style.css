@@ -130,8 +130,37 @@ body {
 }
 
 .large-btn {
-  padding: 12px 32px;
+  padding: 12px 28px;
   font-size: 1.05rem;
+}
+
+.secondary-btn {
+  background: #21262d;
+  color: #c9d1d9;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.secondary-btn:hover, .secondary-btn:active {
+  background: #30363d;
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+.icon-btn.reset-btn:hover, .icon-btn.reset-btn:active {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: rgba(239, 68, 68, 0.5);
+  color: #fca5a5;
+}
+
+.reset-everything-btn {
+  border-color: rgba(239, 68, 68, 0.35);
+  color: #fca5a5;
+}
+
+.reset-everything-btn:hover, .reset-everything-btn:active {
+  background: rgba(239, 68, 68, 0.25);
+  border-color: rgba(239, 68, 68, 0.6);
+  color: #fff;
 }
 
 .danger-btn {
@@ -571,7 +600,10 @@ body {
 .start-controls {
   display: flex;
   justify-content: center;
+  align-items: center;
+  gap: 12px;
   width: 100%;
+  flex-wrap: wrap;
 }
 
 .betting-controls {

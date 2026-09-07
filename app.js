@@ -373,6 +373,8 @@ class PokerGame {
     this.lastWinners = [];
     this.humanRaiseStreak = 0;
     this.humanRaisedThisHand = false;
+    this.gameSessionId = 0;
+    this.botTimeout = null;
 
     this.bindDOM();
   }
@@ -383,6 +385,7 @@ class PokerGame {
     this.communityCardsEl = document.getElementById('community-cards');
     this.startBtn = document.getElementById('start-btn');
     this.resetBtn = document.getElementById('reset-game-btn');
+    this.resetAllAltBtn = document.getElementById('reset-everything-btn');
     this.soundBtn = document.getElementById('sound-btn');
     this.startControls = document.getElementById('start-controls');
     this.bettingControls = document.getElementById('betting-controls');
@@ -413,13 +416,18 @@ class PokerGame {
       this.startNewHand();
     });
 
-    this.resetBtn.addEventListener('click', () => {
-      if (confirm('Reset all player chips to $1,000?')) {
-        this.players.forEach(p => { p.chips = 1000; });
-        this.log('All chip stacks reset to $1,000.', 'system');
-        this.updateUI();
+    const handleResetAll = () => {
+      if (confirm('Reset everything? This will restore all chips to $1,000, wipe the bots\' adapted intelligence back to default, and restart the table.')) {
+        this.resetEverything();
       }
-    });
+    };
+
+    if (this.resetBtn) {
+      this.resetBtn.addEventListener('click', handleResetAll);
+    }
+    if (this.resetAllAltBtn) {
+      this.resetAllAltBtn.addEventListener('click', handleResetAll);
+    }
 
     this.soundBtn.addEventListener('click', () => {
       sounds.enabled = !sounds.enabled;
@@ -499,6 +507,12 @@ class PokerGame {
   }
 
   startNewHand() {
+    this.gameSessionId = (this.gameSessionId || 0) + 1;
+    if (this.botTimeout) {
+      clearTimeout(this.botTimeout);
+      this.botTimeout = null;
+    }
+
     // Check if player has chips
     if (this.players[0].chips <= 0) {
       this.players[0].chips = 500;
@@ -578,16 +592,20 @@ class PokerGame {
   }
 
   async nextTurn() {
+    const sessionId = this.gameSessionId;
+
     // Check if only 1 active player remains
     const activePlayers = this.players.filter(p => !p.folded);
     if (activePlayers.length === 1) {
       this.bettingControls.style.display = 'none';
       await sleep(500);
+      if (sessionId !== this.gameSessionId) return;
       for (const p of this.players) {
         p.cardsRevealed = true;
       }
       this.updateUI();
       await sleep(700);
+      if (sessionId !== this.gameSessionId) return;
       this.awardPot([activePlayers[0]], 'everyone else folded');
       return;
     }
@@ -631,7 +649,12 @@ class PokerGame {
       if (callNeeded > this.bigBlind) {
         delay += 300 + Math.floor(Math.random() * 400); // Extra pause when facing a raise (simulate thinking)
       }
-      setTimeout(() => this.botAction(currentPlayer), delay);
+      if (this.botTimeout) clearTimeout(this.botTimeout);
+      this.botTimeout = setTimeout(() => {
+        this.botTimeout = null;
+        if (sessionId !== this.gameSessionId) return;
+        this.botAction(currentPlayer);
+      }, delay);
     }
   }
 
@@ -985,6 +1008,8 @@ class PokerGame {
   }
 
   async advancePhase() {
+    const sessionId = this.gameSessionId;
+
     // Hide controls during card dealing
     this.bettingControls.style.display = 'none';
 
@@ -1001,46 +1026,54 @@ class PokerGame {
       this.log('--- Dealing Flop ---', 'system');
       this.updateUI(false);
       await sleep(500);
+      if (sessionId !== this.gameSessionId) return;
 
       // Card 1
       this.communityCards.push(this.deck.pop());
       sounds.playCard();
       this.updateUI(true);
       await sleep(400);
+      if (sessionId !== this.gameSessionId) return;
 
       // Card 2
       this.communityCards.push(this.deck.pop());
       sounds.playCard();
       this.updateUI(true);
       await sleep(400);
+      if (sessionId !== this.gameSessionId) return;
 
       // Card 3
       this.communityCards.push(this.deck.pop());
       sounds.playCard();
       this.updateUI(true);
       await sleep(750); // Pause to assess the full flop
+      if (sessionId !== this.gameSessionId) return;
     } else if (this.phase === 'FLOP') {
       this.phase = 'TURN';
       this.deck.pop(); // Burn card
       this.log('--- Dealing Turn ---', 'system');
       this.updateUI(false);
       await sleep(850); // Suspenseful pause before the Turn!
+      if (sessionId !== this.gameSessionId) return;
 
       this.communityCards.push(this.deck.pop());
       sounds.playCard();
       this.updateUI(true);
       await sleep(750);
+      if (sessionId !== this.gameSessionId) return;
     } else if (this.phase === 'TURN') {
       this.phase = 'RIVER';
       this.deck.pop(); // Burn card
       this.log('--- Dealing River ---', 'system');
       this.updateUI(false);
       await sleep(950); // Suspenseful pause before the River!
+      if (sessionId !== this.gameSessionId) return;
 
       this.communityCards.push(this.deck.pop());
       sounds.playCard();
       this.updateUI(true);
       await sleep(800);
+      if (sessionId !== this.gameSessionId) return;
     } else if (this.phase === 'RIVER') {
       this.phase = 'SHOWDOWN';
       await this.showdown();
@@ -1054,11 +1087,13 @@ class PokerGame {
   }
 
   async showdown() {
+    const sessionId = this.gameSessionId;
     this.bettingControls.style.display = 'none';
     this.phase = 'SHOWDOWN';
     this.updateUI();
     this.log('=== SHOWDOWN ===', 'system');
     await sleep(700);
+    if (sessionId !== this.gameSessionId) return;
 
     const activePlayers = this.players.filter(p => !p.folded);
 
@@ -1076,11 +1111,13 @@ class PokerGame {
           this.log(`${p.name} had folded.`);
         }
         await sleep(900); // Dramatic pause per bot reveal!
+        if (sessionId !== this.gameSessionId) return;
       }
     }
 
     this.log('Determining the winner...', 'system');
     await sleep(850); // Final suspense pause!
+    if (sessionId !== this.gameSessionId) return;
 
     const results = activePlayers.map(p => {
       const evalResult = HandEvaluator.evaluate7([...p.holeCards, ...this.communityCards]);
@@ -1116,6 +1153,65 @@ class PokerGame {
     this.startControls.style.display = 'flex';
     this.startBtn.innerText = 'Next Hand';
     this.updateUI(true);
+  }
+
+  resetEverything() {
+    // 1. Invalidate any in-flight asynchronous deals / reveals / bot actions
+    this.gameSessionId = (this.gameSessionId || 0) + 1;
+    if (this.botTimeout) {
+      clearTimeout(this.botTimeout);
+      this.botTimeout = null;
+    }
+
+    // 2. Wipe bot adaptive intelligence & table memory completely back to 0
+    this.humanRaiseStreak = 0;
+    this.humanRaisedThisHand = false;
+
+    // 3. Reset chips & player state
+    this.players.forEach(p => {
+      p.chips = 1000;
+      p.currentBet = 0;
+      p.folded = false;
+      p.allIn = false;
+      p.holeCards = [];
+      p.cardsRevealed = false;
+    });
+
+    // 4. Reset table and game loop state
+    this.deck = [];
+    this.communityCards = [];
+    this.pot = 0;
+    this.dealerIdx = 0;
+    this.currentTurnIdx = 0;
+    this.currentHighestBet = 0;
+    this.minRaise = this.bigBlind;
+    this.phase = 'IDLE';
+    this.turnHistoryCount = 0;
+    this.lastAggressorIdx = -1;
+    this.roundOver = false;
+    this.lastWinners = [];
+
+    // 5. Clean up UI elements
+    document.querySelectorAll('.seat').forEach(s => {
+      s.classList.remove('winner-seat', 'active-turn');
+    });
+
+    this.bettingControls.style.display = 'none';
+    this.startControls.style.display = 'flex';
+    this.startBtn.innerText = 'Start Hand';
+    if (this.handRankDesc) {
+      this.handRankDesc.innerText = 'Click Start Hand to begin';
+    }
+
+    // 6. Refresh UI table elements (re-renders empty community slots and clears player cards)
+    this.updateUI(true);
+
+    // 7. Audio & feedback
+    sounds.playChip();
+    this.log('🔄 Game reset: All chips ($1,000) and bot memory/adaptive intelligence cleared to default.', 'system');
+    if (this.tickerText) {
+      this.tickerText.innerText = 'Game reset: All chips and bot intelligence restored.';
+    }
   }
 
   updateUI(refreshCards = false) {
