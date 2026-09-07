@@ -264,13 +264,7 @@ body {
 
 .seat.active-turn .player-card {
   border-color: var(--active-glow);
-  box-shadow: 0 0 16px rgba(0, 240, 255, 0.7);
-  animation: pulse-turn 1.5s infinite alternate;
-}
-
-@keyframes pulse-turn {
-  0% { box-shadow: 0 0 8px rgba(0, 240, 255, 0.4); }
-  100% { box-shadow: 0 0 20px rgba(0, 240, 255, 0.9); }
+  box-shadow: 0 0 14px rgba(0, 240, 255, 0.6);
 }
 
 /* Desktop Seats Positioning */
@@ -427,14 +421,8 @@ body {
   box-shadow: 0 3px 8px rgba(0, 0, 0, 0.4);
   position: relative;
   font-weight: 800;
-  transition: transform 0.2s ease, opacity 0.2s ease;
-  animation: deal-in 0.25s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+  transition: opacity 0.2s ease, filter 0.2s ease;
   overflow: hidden;
-}
-
-@keyframes deal-in {
-  from { opacity: 0; transform: translateY(-10px) scale(0.85); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 .card.red {

@@ -23,6 +23,8 @@ const RANKS = [
   { rank: 'A', val: 14 }
 ];
 
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 // Sound Synthesizer via Web Audio API
 class SoundManager {
   constructor() {
@@ -370,6 +372,7 @@ class PokerGame {
     this.players.forEach(p => {
       p.folded = false;
       p.allIn = false;
+      p.cardsRevealed = false;
       p.currentBet = 0;
       p.holeCards = [this.deck.pop(), this.deck.pop()];
     });
@@ -405,10 +408,17 @@ class PokerGame {
     this.log(`${player.name} posts ${label} $${betAmount}`);
   }
 
-  nextTurn() {
+  async nextTurn() {
     // Check if only 1 active player remains
     const activePlayers = this.players.filter(p => !p.folded);
     if (activePlayers.length === 1) {
+      this.bettingControls.style.display = 'none';
+      await sleep(500);
+      for (const p of this.players) {
+        p.cardsRevealed = true;
+      }
+      this.updateUI();
+      await sleep(700);
       this.awardPot([activePlayers[0]], 'everyone else folded');
       return;
     }
@@ -418,7 +428,7 @@ class PokerGame {
     const allBetsEqual = eligibleToAct.every(p => p.currentBet === this.currentHighestBet);
 
     if (this.turnHistoryCount >= activePlayers.length && (allBetsEqual || eligibleToAct.length <= 1)) {
-      this.advancePhase();
+      await this.advancePhase();
       return;
     }
 
@@ -435,7 +445,7 @@ class PokerGame {
 
     // If nobody else can act (e.g. all-in), advance to showdown
     if (eligibleToAct.length <= 1 && allBetsEqual) {
-      this.advancePhase();
+      await this.advancePhase();
       return;
     }
 
@@ -447,7 +457,7 @@ class PokerGame {
       this.promptHumanAction();
     } else {
       this.bettingControls.style.display = 'none';
-      setTimeout(() => this.botAction(currentPlayer), 800);
+      setTimeout(() => this.botAction(currentPlayer), 900);
     }
   }
 
@@ -589,34 +599,66 @@ class PokerGame {
     }
   }
 
-  advancePhase() {
+  async advancePhase() {
+    // Hide controls during card dealing
+    this.bettingControls.style.display = 'none';
+
     // Reset bets for active players
     this.players.forEach(p => { p.currentBet = 0; });
     this.currentHighestBet = 0;
     this.minRaise = this.bigBlind;
     this.turnHistoryCount = 0;
+    this.updateUI();
 
     if (this.phase === 'PRE-FLOP') {
       this.phase = 'FLOP';
-      this.deck.pop(); // Burn
-      this.communityCards.push(this.deck.pop(), this.deck.pop(), this.deck.pop());
-      sounds.playCard();
+      this.deck.pop(); // Burn card
       this.log('--- Dealing Flop ---', 'system');
+      this.updateUI();
+      await sleep(500);
+
+      // Card 1
+      this.communityCards.push(this.deck.pop());
+      sounds.playCard();
+      this.updateUI();
+      await sleep(400);
+
+      // Card 2
+      this.communityCards.push(this.deck.pop());
+      sounds.playCard();
+      this.updateUI();
+      await sleep(400);
+
+      // Card 3
+      this.communityCards.push(this.deck.pop());
+      sounds.playCard();
+      this.updateUI();
+      await sleep(750); // Pause to assess the full flop
     } else if (this.phase === 'FLOP') {
       this.phase = 'TURN';
-      this.deck.pop(); // Burn
+      this.deck.pop(); // Burn card
+      this.log('--- Dealing Turn ---', 'system');
+      this.updateUI();
+      await sleep(850); // Suspenseful pause before the Turn!
+
       this.communityCards.push(this.deck.pop());
       sounds.playCard();
-      this.log('--- Dealing Turn ---', 'system');
+      this.updateUI();
+      await sleep(750);
     } else if (this.phase === 'TURN') {
       this.phase = 'RIVER';
-      this.deck.pop(); // Burn
+      this.deck.pop(); // Burn card
+      this.log('--- Dealing River ---', 'system');
+      this.updateUI();
+      await sleep(950); // Suspenseful pause before the River!
+
       this.communityCards.push(this.deck.pop());
       sounds.playCard();
-      this.log('--- Dealing River ---', 'system');
+      this.updateUI();
+      await sleep(800);
     } else if (this.phase === 'RIVER') {
       this.phase = 'SHOWDOWN';
-      this.showdown();
+      await this.showdown();
       return;
     }
 
@@ -626,12 +668,35 @@ class PokerGame {
     this.nextTurn();
   }
 
-  showdown() {
-    this.updateUI();
+  async showdown() {
     this.bettingControls.style.display = 'none';
+    this.phase = 'SHOWDOWN';
+    this.updateUI();
     this.log('=== SHOWDOWN ===', 'system');
+    await sleep(700);
 
     const activePlayers = this.players.filter(p => !p.folded);
+
+    // Dramatically reveal each bot's cards one by one!
+    for (const p of this.players) {
+      if (!p.isHuman) {
+        p.cardsRevealed = true;
+        sounds.playCard();
+        this.updateUI();
+
+        if (!p.folded) {
+          const evalResult = HandEvaluator.evaluate7([...p.holeCards, ...this.communityCards]);
+          this.log(`${p.name} reveals: ${evalResult.name}`);
+        } else {
+          this.log(`${p.name} had folded.`);
+        }
+        await sleep(900); // Dramatic pause per bot reveal!
+      }
+    }
+
+    this.log('Determining the winner...', 'system');
+    await sleep(850); // Final suspense pause!
+
     const results = activePlayers.map(p => {
       const evalResult = HandEvaluator.evaluate7([...p.holeCards, ...this.communityCards]);
       return { player: p, eval: evalResult };
@@ -642,10 +707,6 @@ class PokerGame {
     // Find winners (handle ties)
     const bestEval = results[0].eval;
     const winners = results.filter(r => HandEvaluator.compare(r.eval, bestEval) === 0).map(r => r.player);
-
-    results.forEach(r => {
-      this.log(`${r.player.name} shows ${r.player.holeCards.map(c => c.rank + c.suit).join(' ')}: ${r.eval.name}`);
-    });
 
     this.awardPot(winners, bestEval.name);
   }
@@ -737,16 +798,20 @@ class PokerGame {
             statusEl.innerText = isWinner ? '🏆 Winner' : 'Active';
             statusEl.className = isWinner ? 'player-status winner-text' : 'player-status';
           }
+        } else if (p.cardsRevealed && this.communityCards.length >= 3) {
+          const evalResult = HandEvaluator.evaluate7([...p.holeCards, ...this.communityCards]);
+          statusEl.innerText = evalResult.name;
+          statusEl.className = 'player-status';
         } else {
           statusEl.innerText = this.phase === 'IDLE' ? 'Ready' : 'In Hand';
           statusEl.className = 'player-status';
         }
       }
 
-      // Cards rendering: Show everyone's cards when round is over!
+      // Cards rendering: Human always visible, bots revealed sequentially or at round end
       cardsEl.innerHTML = '';
       if (p.holeCards.length > 0) {
-        if (p.isHuman || this.roundOver || this.phase === 'SHOWDOWN') {
+        if (p.isHuman || this.roundOver || p.cardsRevealed) {
           p.holeCards.forEach(c => {
             const cardEl = this.renderCardDOM(c);
             if (p.folded) {
