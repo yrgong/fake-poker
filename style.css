@@ -267,6 +267,11 @@ body {
   box-shadow: 0 0 14px rgba(0, 240, 255, 0.6);
 }
 
+.seat.winner-seat .player-card {
+  border-color: var(--gold) !important;
+  box-shadow: 0 0 20px rgba(244, 196, 48, 0.85) !important;
+}
+
 /* Desktop Seats Positioning */
 .seat-top {
   top: -20px;

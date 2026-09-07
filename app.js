@@ -385,6 +385,7 @@ class PokerGame {
     this.minRaise = this.bigBlind;
     this.roundOver = false;
     this.lastWinners = [];
+    document.querySelectorAll('.seat').forEach(s => s.classList.remove('winner-seat', 'active-turn'));
 
     // Reset player states
     this.players.forEach(p => {
@@ -819,7 +820,11 @@ class PokerGame {
     sounds.playWin();
     const share = Math.floor(this.pot / winners.length);
     const names = winners.map(w => w.name).join(' & ');
-    winners.forEach(w => { w.chips += share; });
+    winners.forEach(w => {
+      w.chips += share;
+      const seat = document.getElementById(`seat-${w.id}`);
+      if (seat) seat.classList.add('winner-seat');
+    });
 
     this.log(`🏆 ${names} won $${this.pot} with ${reason}!`, 'winner');
 
