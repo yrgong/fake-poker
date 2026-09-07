@@ -216,6 +216,136 @@ class HandEvaluator {
     const map = { 14: 'Ace', 13: 'King', 12: 'Queen', 11: 'Jack', 10: '10' };
     return map[val] || String(val);
   }
+
+  static getPreFlopTier(holeCards) {
+    const c1 = holeCards[0];
+    const c2 = holeCards[1];
+    const isPair = c1.val === c2.val;
+    const isSuited = c1.suit === c2.suit;
+    const highVal = Math.max(c1.val, c2.val);
+    const lowVal = Math.min(c1.val, c2.val);
+    const isConnected = (highVal - lowVal) <= 2;
+
+    if (isPair) {
+      if (highVal >= 10) return 'monster'; // TT, JJ, QQ, KK, AA
+      if (highVal >= 7) return 'strong';   // 77, 88, 99
+      return 'playable';                   // 22, 33, 44, 55, 66 (always playable/set-mining)
+    }
+
+    if (highVal === 14) { // Ace high
+      if (lowVal >= 12) return isSuited ? 'monster' : 'strong'; // AKs, AQs, AKo, AQo
+      if (lowVal >= 10) return 'strong';                        // AJs, ATs, AJo, ATo
+      if (isSuited) return 'playable';                          // A2s - A9s
+      if (lowVal >= 7) return 'playable';                       // A7o - A9o
+      return 'marginal';                                        // A2o - A6o
+    }
+
+    if (highVal === 13) { // King high
+      if (lowVal >= 10) return 'strong';                        // KQ, KJ, KT
+      if (isSuited && lowVal >= 6) return 'playable';           // K6s - K9s
+      if (lowVal >= 9) return 'playable';                       // K9o
+      if (isSuited) return 'marginal';                          // K2s - K5s
+    }
+
+    if (highVal === 12) { // Queen high
+      if (lowVal >= 10) return 'strong';                        // QJ, QT
+      if (isSuited && lowVal >= 7) return 'playable';           // Q7s - Q9s
+      if (lowVal >= 9) return 'playable';                       // Q9o
+      if (isSuited) return 'marginal';
+    }
+
+    if (highVal === 11) { // Jack high
+      if (lowVal >= 9) return 'playable';                       // JT, J9
+      if (isSuited && lowVal >= 7) return 'playable';           // J7s, J8s
+    }
+
+    // Suited connectors / one-gappers: 54s, 65s, 76s, 87s, 98s, T9s, 86s, 97s, T8s
+    if (isSuited && isConnected && lowVal >= 5) {
+      return 'playable';
+    }
+
+    // Connectors offsuit: 89o, 9To, TJo
+    if (isConnected && lowVal >= 8) {
+      return 'marginal';
+    }
+
+    // Two high cards (both 8+)
+    if (lowVal >= 8) {
+      return 'marginal';
+    }
+
+    return 'trash';
+  }
+
+  static evaluatePostFlop(holeCards, communityCards) {
+    const allCards = [...holeCards, ...communityCards];
+    const evalResult = this.evaluate7(allCards);
+    const cat = evalResult.category;
+    const maxBoardVal = Math.max(...communityCards.map(c => c.val));
+
+    // Overpair / Top pair detection
+    const isPocketPair = holeCards[0].val === holeCards[1].val;
+    const isOverpair = isPocketPair && holeCards[0].val > maxBoardVal;
+    const isTopPair = cat === 1 && (holeCards[0].val === maxBoardVal || holeCards[1].val === maxBoardVal);
+    const isMiddleOrBottomPair = cat === 1 && !isOverpair && !isTopPair;
+
+    // Flush draw: 4 to a suit, and hole card contributes
+    let flushDraw = false;
+    const suitCounts = {};
+    allCards.forEach(c => { suitCounts[c.suit] = (suitCounts[c.suit] || 0) + 1; });
+    for (const [suit, count] of Object.entries(suitCounts)) {
+      if (count === 4 && holeCards.some(c => c.suit === suit)) {
+        flushDraw = true;
+        break;
+      }
+    }
+
+    // Straight draw: 4 cards within span <= 4, and hole card contributes
+    let straightDraw = false;
+    const holeVals = new Set(holeCards.map(c => c.val));
+    if (holeVals.has(14)) holeVals.add(1);
+    const uniqueVals = [...new Set(allCards.map(c => c.val))].sort((a, b) => a - b);
+    if (uniqueVals.includes(14)) uniqueVals.unshift(1);
+    for (let i = 0; i <= uniqueVals.length - 4; i++) {
+      const window = uniqueVals.slice(i, i + 4);
+      if (window[3] - window[0] <= 4) {
+        if (window.some(v => holeVals.has(v))) {
+          straightDraw = true;
+          break;
+        }
+      }
+    }
+
+    // Overcards
+    const overcards = holeCards.filter(c => c.val > maxBoardVal).length;
+
+    return {
+      cat,
+      name: evalResult.name,
+      isOverpair,
+      isTopPair,
+      isMiddleOrBottomPair,
+      flushDraw,
+      straightDraw,
+      overcards
+    };
+  }
+
+  static hasDraw(cards) {
+    if (cards.length < 5) return false;
+    // 4 to a flush
+    const suitCounts = {};
+    cards.forEach(c => { suitCounts[c.suit] = (suitCounts[c.suit] || 0) + 1; });
+    if (Object.values(suitCounts).some(cnt => cnt >= 4)) return true;
+
+    // 4 to a straight
+    const vals = [...new Set(cards.map(c => c.val))].sort((a, b) => a - b);
+    if (vals.includes(14)) vals.unshift(1);
+    for (let i = 0; i <= vals.length - 4; i++) {
+      if (vals[i + 3] - vals[i] <= 4) return true;
+    }
+    return false;
+  }
 }
 
 // Game State & Logic
@@ -241,6 +371,8 @@ class PokerGame {
     this.lastAggressorIdx = -1;
     this.roundOver = false;
     this.lastWinners = [];
+    this.humanRaiseStreak = 0;
+    this.humanRaisedThisHand = false;
 
     this.bindDOM();
   }
@@ -387,6 +519,12 @@ class PokerGame {
     this.lastWinners = [];
     document.querySelectorAll('.seat').forEach(s => s.classList.remove('winner-seat', 'active-turn'));
 
+    // Track human aggression over hands
+    if (!this.humanRaisedThisHand) {
+      this.humanRaiseStreak = Math.max(0, this.humanRaiseStreak - 1);
+    }
+    this.humanRaisedThisHand = false;
+
     // Reset player states
     this.players.forEach(p => {
       p.folded = false;
@@ -488,7 +626,12 @@ class PokerGame {
       this.promptHumanAction();
     } else {
       this.bettingControls.style.display = 'none';
-      setTimeout(() => this.botAction(currentPlayer), 900);
+      const callNeeded = this.currentHighestBet - currentPlayer.currentBet;
+      let delay = 700 + Math.floor(Math.random() * 500); // 700ms - 1200ms
+      if (callNeeded > this.bigBlind) {
+        delay += 300 + Math.floor(Math.random() * 400); // Extra pause when facing a raise (simulate thinking)
+      }
+      setTimeout(() => this.botAction(currentPlayer), delay);
     }
   }
 
@@ -548,6 +691,17 @@ class PokerGame {
   handleAction(action, targetTotalBet = 0) {
     const p = this.players[this.currentTurnIdx];
 
+    if (p.isHuman) {
+      if (action === 'raise') {
+        this.humanRaisedThisHand = true;
+        this.humanRaiseStreak = Math.min(6, this.humanRaiseStreak + 1);
+      } else if (action === 'fold') {
+        if (!this.humanRaisedThisHand) {
+          this.humanRaiseStreak = Math.max(0, this.humanRaiseStreak - 1);
+        }
+      }
+    }
+
     if (action === 'fold') {
       p.folded = true;
       this.log(`${p.name} folds.`);
@@ -565,6 +719,7 @@ class PokerGame {
         this.log(`${p.name} calls $${bet}.`);
       }
     } else if (action === 'raise') {
+      this.lastAggressorIdx = this.currentTurnIdx;
       const added = targetTotalBet - p.currentBet;
       const actualAdded = Math.min(added, p.chips);
       p.chips -= actualAdded;
@@ -589,65 +744,126 @@ class PokerGame {
   botAction(bot) {
     const callNeeded = this.currentHighestBet - bot.currentBet;
     const isPreFlop = this.phase === 'PRE-FLOP';
-    
-    if (isPreFlop) {
-      // Evaluate Pre-Flop strength
-      const c1 = bot.holeCards[0];
-      const c2 = bot.holeCards[1];
-      const isPair = c1.val === c2.val;
-      const isSuited = c1.suit === c2.suit;
-      const highVal = Math.max(c1.val, c2.val);
-      const lowVal = Math.min(c1.val, c2.val);
-      const isConnected = (highVal - lowVal) <= 2;
+    const isManiac = this.humanRaiseStreak >= 1;
+    const isExtremeManiac = this.humanRaiseStreak >= 3;
+    const isBlind = bot.currentBet > 0;
+    const maxTotalBet = bot.chips + bot.currentBet;
 
-      let tier = 'trash'; // trash, medium, strong, monster
-      if (isPair) {
-        if (highVal >= 10) tier = 'monster'; // TT, JJ, QQ, KK, AA
-        else if (highVal >= 6) tier = 'strong'; // 66-99
-        else tier = 'medium'; // 22-55
-      } else if (highVal === 14) { // Ace high
-        if (lowVal >= 10) tier = isSuited ? 'monster' : 'strong'; // AK, AQ, AJ, AT
-        else if (isSuited) tier = 'medium'; // A2s-A9s
-        else tier = lowVal >= 8 ? 'medium' : 'trash'; // A8o, A9o
-      } else if (highVal >= 11 && lowVal >= 10) { // KQ, KJ, QJ
-        tier = 'strong';
-      } else if (isSuited && isConnected && lowVal >= 6) { // 78s, 89s, 9Ts
-        tier = 'medium';
-      } else if (highVal >= 12 && isSuited) {
-        tier = 'medium';
+    const tryRaise = (multiplier = 1.5) => {
+      const minTarget = this.currentHighestBet + this.minRaise;
+      if (maxTotalBet >= minTarget) {
+        const targetRaise = Math.min(maxTotalBet, this.currentHighestBet + Math.max(this.minRaise, Math.round(this.minRaise * multiplier)));
+        this.handleAction('raise', targetRaise);
+      } else {
+        this.handleAction('call'); // Go all-in / call
       }
+    };
+
+    if (isPreFlop) {
+      const tier = HandEvaluator.getPreFlopTier(bot.holeCards);
 
       if (callNeeded === 0) {
-        // Can check for free
-        if (tier === 'monster' && Math.random() < 0.5) {
-          const raiseAmount = Math.min(this.currentHighestBet + this.minRaise * 2, bot.chips + bot.currentBet);
-          this.handleAction('raise', raiseAmount);
+        // Can check for free (e.g. Big Blind in limped pot)
+        if (tier === 'monster') {
+          Math.random() < 0.65 ? tryRaise(2.0) : this.handleAction('call');
+        } else if (tier === 'strong') {
+          Math.random() < 0.4 ? tryRaise(1.5) : this.handleAction('call');
+        } else if (tier === 'playable' && bot.name === 'Bob' && Math.random() < 0.25) {
+          tryRaise(1.0);
         } else {
           this.handleAction('call'); // Check
         }
-      } else {
-        // Facing a bet pre-flop
+        return;
+      }
+
+      // Unraised pot or completing blind ($10 or $20)
+      if (callNeeded <= this.bigBlind) {
         if (tier === 'monster') {
-          if (Math.random() < 0.45 && bot.chips > callNeeded * 2) {
-            const raiseAmount = Math.min(this.currentHighestBet + this.minRaise * 2, bot.chips + bot.currentBet);
-            this.handleAction('raise', raiseAmount);
-          } else {
-            this.handleAction('call');
-          }
+          Math.random() < 0.7 ? tryRaise(2.5) : this.handleAction('call');
         } else if (tier === 'strong') {
-          if (callNeeded <= this.bigBlind * 3) {
-            this.handleAction('call');
-          } else {
-            this.handleAction('fold');
-          }
-        } else if (tier === 'medium') {
-          if (callNeeded <= this.bigBlind) {
+          Math.random() < 0.45 ? tryRaise(2.0) : this.handleAction('call');
+        } else if (tier === 'playable') {
+          this.handleAction('call');
+        } else if (tier === 'marginal') {
+          // Blinds, Bob, and Charlie play marginal hands in unraised pots
+          if (isBlind || bot.name !== 'Alice' || Math.random() < 0.6) {
             this.handleAction('call');
           } else {
             this.handleAction('fold');
           }
         } else {
-          // Trash hands fold to any bet!
+          // Trash hands fold unless in Small Blind getting 3:1 pot odds
+          if (isBlind && Math.random() < 0.35) {
+            this.handleAction('call');
+          } else {
+            this.handleAction('fold');
+          }
+        }
+        return;
+      }
+
+      // Facing a pre-flop RAISE (callNeeded > bigBlind)
+      if (tier === 'monster') {
+        // AA, KK, QQ, JJ, TT, AK, AQs
+        // If human is maniac, 3-bet aggressively; else mix 3-bet and call/trap
+        const reRaiseChance = isManiac ? 0.75 : 0.55;
+        if (Math.random() < reRaiseChance && maxTotalBet >= this.currentHighestBet + this.minRaise) {
+          tryRaise(isManiac ? 2.5 : 2.0);
+        } else {
+          this.handleAction('call');
+        }
+      } else if (tier === 'strong') {
+        // 77-99, AQ, AJ, AT, KQ, KJ, QJ
+        // Defend against raises up to 5x BB or 40% stack
+        if (callNeeded <= Math.max(this.bigBlind * 5, bot.chips * 0.4)) {
+          // 3-bet if human is a maniac or Bob
+          if (isManiac && Math.random() < 0.4 && maxTotalBet >= this.currentHighestBet + this.minRaise) {
+            tryRaise(2.0);
+          } else {
+            this.handleAction('call');
+          }
+        } else if (isManiac && callNeeded <= bot.chips * 0.6) {
+          this.handleAction('call');
+        } else {
+          this.handleAction('fold');
+        }
+      } else if (tier === 'playable') {
+        // 22-66, suited aces, Broadway, suited connectors
+        // Pocket pairs (22-66) ALWAYS set-mine on standard raises
+        const isPocketPair = bot.holeCards[0].val === bot.holeCards[1].val;
+        const maxStandardCall = isPocketPair ? this.bigBlind * 5 : this.bigBlind * 4;
+
+        if (callNeeded <= maxStandardCall || (isManiac && callNeeded <= bot.chips * 0.35)) {
+          if (isManiac && bot.name === 'Bob' && Math.random() < 0.25 && maxTotalBet >= this.currentHighestBet + this.minRaise) {
+            tryRaise(1.5); // Squeeze / 3-bet bluff against serial raiser
+          } else {
+            this.handleAction('call');
+          }
+        } else if (isBlind && callNeeded <= this.bigBlind * 5) {
+          this.handleAction('call'); // Defend blind
+        } else {
+          this.handleAction('fold');
+        }
+      } else if (tier === 'marginal') {
+        // Connectors, suited cards, two cards >= 8
+        if (isManiac) {
+          // Bully defense: Bots refuse to get run over!
+          const callChance = bot.name === 'Bob' ? 0.75 : (bot.name === 'Charlie' ? 0.65 : 0.45);
+          if (Math.random() < callChance && callNeeded <= Math.max(this.bigBlind * 4, bot.chips * 0.3)) {
+            this.handleAction('call');
+          } else {
+            this.handleAction('fold');
+          }
+        } else if (isBlind && callNeeded <= this.bigBlind * 2.5) {
+          this.handleAction('call');
+        } else {
+          this.handleAction('fold');
+        }
+      } else {
+        // Trash
+        if (isExtremeManiac && bot.name === 'Bob' && Math.random() < 0.2 && callNeeded <= this.bigBlind * 3) {
+          this.handleAction('call');
+        } else {
           this.handleAction('fold');
         }
       }
@@ -655,51 +871,115 @@ class PokerGame {
     }
 
     // Post-Flop evaluation (Flop, Turn, River)
-    const handEval = HandEvaluator.evaluate7([...bot.holeCards, ...this.communityCards]);
-    const cat = handEval.category; // 0 = High card, 1 = Pair, 2 = Two Pair, 3+ = Strong
+    const pf = HandEvaluator.evaluatePostFlop(bot.holeCards, this.communityCards);
+    const cat = pf.cat;
+    const pot = Math.max(1, this.pot);
+    const betToPotRatio = callNeeded / pot;
 
     if (callNeeded === 0) {
       // Free check available
-      if (cat >= 3 && Math.random() < 0.65) {
-        const raiseAmount = Math.min(this.currentHighestBet + this.bigBlind * 2, bot.chips + bot.currentBet);
-        this.handleAction('raise', raiseAmount);
-      } else if (cat >= 1 && Math.random() < 0.25) {
-        const raiseAmount = Math.min(this.currentHighestBet + this.bigBlind, bot.chips + bot.currentBet);
-        this.handleAction('raise', raiseAmount);
-      } else {
-        this.handleAction('call'); // Check
-      }
-    } else {
-      // Must call a bet
       if (cat >= 3) {
-        // Monster hand: re-raise or call
-        if (Math.random() < 0.45 && bot.chips > callNeeded * 2) {
-          const raiseAmount = Math.min(this.currentHighestBet + this.minRaise * 2, bot.chips + bot.currentBet);
-          this.handleAction('raise', raiseAmount);
-        } else {
-          this.handleAction('call');
-        }
+        // Monster: bet 65% of the time, slow-play check 35%
+        Math.random() < 0.65 ? tryRaise(2.0) : this.handleAction('call');
       } else if (cat === 2) {
-        // Two pair: call unless bet is gigantic
-        if (callNeeded <= bot.chips * 0.7) {
-          this.handleAction('call');
-        } else {
-          this.handleAction('fold');
-        }
+        // Two pair: bet 55%
+        Math.random() < 0.55 ? tryRaise(1.5) : this.handleAction('call');
       } else if (cat === 1) {
-        // One pair: call small/medium bets, fold to large raises
-        if (callNeeded <= this.bigBlind * 2.5 || callNeeded <= this.pot * 0.35) {
+        if (pf.isOverpair || pf.isTopPair) {
+          // Top pair/overpair: value bet 50%
+          Math.random() < 0.5 ? tryRaise(1.2) : this.handleAction('call');
+        } else {
+          // Middle/bottom pair: check 80%, stab 20%
+          Math.random() < 0.2 ? tryRaise(1.0) : this.handleAction('call');
+        }
+      } else if (pf.flushDraw || pf.straightDraw) {
+        // Semi-bluff with draws
+        (bot.name === 'Bob' && Math.random() < 0.4) ? tryRaise(1.2) : this.handleAction('call');
+      } else {
+        // High card: Bob bluffs 12%, otherwise check
+        (bot.name === 'Bob' && Math.random() < 0.12) ? tryRaise(1.0) : this.handleAction('call');
+      }
+      return;
+    }
+
+    // Facing a bet/raise post-flop (callNeeded > 0)
+    if (cat >= 3) {
+      // Monster hand (Trips, Straight, Flush, Full House+)
+      // Punish aggressive human with 3-bets / re-raises
+      const reRaiseChance = isManiac ? 0.65 : 0.45;
+      if (Math.random() < reRaiseChance && maxTotalBet >= this.currentHighestBet + this.minRaise) {
+        tryRaise(2.0);
+      } else {
+        this.handleAction('call');
+      }
+    } else if (cat === 2) {
+      // Two Pair
+      if (isManiac && Math.random() < 0.45 && maxTotalBet >= this.currentHighestBet + this.minRaise) {
+        tryRaise(1.8);
+      } else if (callNeeded <= bot.chips * 0.85) {
+        this.handleAction('call');
+      } else {
+        this.handleAction('fold');
+      }
+    } else if (cat === 1) {
+      // One pair
+      if (pf.isOverpair || pf.isTopPair) {
+        // Overpair or Top Pair: Strong!
+        if (isManiac) {
+          // Against a serial raiser, top pair is practically the nuts
+          if (Math.random() < 0.35 && maxTotalBet >= this.currentHighestBet + this.minRaise) {
+            tryRaise(1.5); // Re-raise the bluffer!
+          } else {
+            this.handleAction('call');
+          }
+        } else if (betToPotRatio <= 1.2 || callNeeded <= bot.chips * 0.5) {
           this.handleAction('call');
         } else {
           this.handleAction('fold');
         }
       } else {
-        // High card / air: fold unless rare bluff
-        if (bot.name === 'Bob' && Math.random() < 0.12 && callNeeded <= this.bigBlind * 2) {
+        // Middle or Bottom pair
+        if (isManiac) {
+          // Call down the serial raiser with any pair up to 85% pot
+          if (betToPotRatio <= 0.85 || bot.name === 'Charlie' || callNeeded <= this.bigBlind * 4) {
+            this.handleAction('call');
+          } else {
+            this.handleAction('fold');
+          }
+        } else if (betToPotRatio <= 0.45 || callNeeded <= this.bigBlind * 2.5) {
           this.handleAction('call');
         } else {
           this.handleAction('fold');
         }
+      }
+    } else if (pf.flushDraw || pf.straightDraw) {
+      // Big draws (Flush / Straight draw)
+      if (this.phase !== 'RIVER') {
+        // Still cards to come! Good pot odds to call
+        const maxDrawCallRatio = isManiac ? 0.85 : 0.65;
+        if (betToPotRatio <= maxDrawCallRatio || callNeeded <= this.bigBlind * 4) {
+          // Bob might semi-bluff raise with a draw
+          if (bot.name === 'Bob' && Math.random() < 0.25 && maxTotalBet >= this.currentHighestBet + this.minRaise) {
+            tryRaise(1.5);
+          } else {
+            this.handleAction('call');
+          }
+        } else {
+          this.handleAction('fold');
+        }
+      } else {
+        // Missed draw on river
+        this.handleAction('fold');
+      }
+    } else if (pf.overcards >= 2 && this.phase === 'FLOP' && isManiac && betToPotRatio <= 0.45) {
+      // 2 overcards (e.g. AK on low board) floating the flop against a maniac
+      this.handleAction('call');
+    } else {
+      // Pure air (no pair, no draw)
+      if (isManiac && bot.name === 'Bob' && Math.random() < 0.2 && callNeeded <= this.bigBlind * 2) {
+        this.handleAction('call'); // Bob float/hero-call
+      } else {
+        this.handleAction('fold');
       }
     }
   }
