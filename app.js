@@ -242,6 +242,20 @@ class PokerGame {
     this.raiseVal = document.getElementById('raise-val');
     this.handRankDesc = document.getElementById('hand-rank-desc');
     this.logMessages = document.getElementById('log-messages');
+    this.logPanel = document.getElementById('log-panel');
+    this.logToggleBtn = document.getElementById('log-toggle-btn');
+    this.closeLogBtn = document.getElementById('close-log-btn');
+    this.liveTicker = document.getElementById('live-ticker');
+    this.tickerText = document.getElementById('ticker-text');
+
+    // Unlock audio on first touch/click anywhere (iOS Safari / mobile policy)
+    const unlockAudio = () => {
+      sounds.init();
+      document.removeEventListener('touchstart', unlockAudio);
+      document.removeEventListener('click', unlockAudio);
+    };
+    document.addEventListener('touchstart', unlockAudio, { passive: true });
+    document.addEventListener('click', unlockAudio, { passive: true });
 
     this.startBtn.addEventListener('click', () => {
       sounds.init();
@@ -258,8 +272,27 @@ class PokerGame {
 
     this.soundBtn.addEventListener('click', () => {
       sounds.enabled = !sounds.enabled;
-      this.soundBtn.innerText = sounds.enabled ? '🔊 Sound' : '🔇 Muted';
+      this.soundBtn.innerText = sounds.enabled ? '🔊' : '🔇';
     });
+
+    // Mobile Log Drawer / Modal Toggle
+    if (this.logToggleBtn) {
+      this.logToggleBtn.addEventListener('click', () => {
+        this.logPanel.classList.toggle('open');
+      });
+    }
+
+    if (this.liveTicker) {
+      this.liveTicker.addEventListener('click', () => {
+        this.logPanel.classList.add('open');
+      });
+    }
+
+    if (this.closeLogBtn) {
+      this.closeLogBtn.addEventListener('click', () => {
+        this.logPanel.classList.remove('open');
+      });
+    }
 
     this.foldBtn.addEventListener('click', () => this.handleAction('fold'));
     this.checkCallBtn.addEventListener('click', () => this.handleAction('call'));
@@ -287,6 +320,10 @@ class PokerGame {
     div.innerText = msg;
     this.logMessages.appendChild(div);
     this.logMessages.scrollTop = this.logMessages.scrollHeight;
+
+    if (this.tickerText) {
+      this.tickerText.innerText = msg;
+    }
   }
 
   createDeck() {
